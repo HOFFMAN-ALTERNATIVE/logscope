@@ -11,6 +11,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Pinned toolchain = MSRV (1.85): lint results are reproducible and the
+  # minimum supported version is exercised on every push.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -33,14 +35,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
-
-  msrv:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.80.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked --all-targets
 
   smoke:
     runs-on: ubuntu-latest

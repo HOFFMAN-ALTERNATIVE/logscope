@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/HOFFMAN-ALTERNATIVE/logscope/actions/workflows/ci.yml/badge.svg)](https://github.com/HOFFMAN-ALTERNATIVE/logscope/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white)
-![MSRV](https://img.shields.io/badge/MSRV-1.80-blue)
+![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 **`grep` + `jq` + `awk` for logs, in one fast binary.** `logscope` tails, filters
@@ -161,7 +161,7 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-CI: rustfmt + clippy `-D warnings` · tests on Linux and macOS · MSRV 1.80 check ·
+CI: rustfmt + clippy `-D warnings` · tests on Linux and macOS · MSRV 1.85 (pinned lint toolchain) ·
 release-build throughput smoke test. Tagging `v*` builds Linux/macOS/Windows
 binaries and attaches them to a GitHub Release.
 

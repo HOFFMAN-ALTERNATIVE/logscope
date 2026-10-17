@@ -10,6 +10,11 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(200);
 
+/// Longest line kept in memory. Anything beyond is cut off and the rest of
+/// the line discarded, so a binary file or a newline-free stream cannot grow
+/// one buffer until the process is OOM-killed.
+pub const MAX_LINE: usize = 1 << 20;
+
 /// Stream lines from `paths` (stdin when empty or "-") into a channel.
 ///
 /// Each source runs on its own thread so slow or idle inputs never block
@@ -54,9 +59,15 @@ fn read_lines(
     let mut buf = Vec::new();
     loop {
         buf.clear();
-        match r.read_until(b'\n', &mut buf) {
+        match r.by_ref().take(MAX_LINE as u64).read_until(b'\n', &mut buf) {
             Ok(0) => return,
             Ok(_) => {
+                if buf.len() == MAX_LINE && buf.last() != Some(&b'\n') {
+                    if let Err(e) = r.skip_until(b'\n') {
+                        let _ = tx.send(Err(e.into()));
+                        return;
+                    }
+                }
                 // Lossy decoding: one bad byte must not abort a multi-GB scan.
                 if !emit(String::from_utf8_lossy(&buf).into_owned()) {
                     return;
@@ -74,12 +85,24 @@ fn follow_file(path: &Path, file: File, tx: &mpsc::SyncSender<Result<String>>) -
     let mut reader = BufReader::new(file);
     let mut pos: u64 = 0;
     let mut partial = Vec::new();
+    // True while dropping the tail of an over-long line.
+    let mut discarding = false;
     loop {
         let mut chunk = Vec::new();
         let n = reader.by_ref().take(1 << 20).read_to_end(&mut chunk)?;
         if n > 0 {
             pos += n as u64;
-            partial.extend_from_slice(&chunk);
+            let mut chunk = &chunk[..];
+            if discarding {
+                match chunk.iter().position(|&b| b == b'\n') {
+                    Some(i) => {
+                        chunk = &chunk[i + 1..];
+                        discarding = false;
+                    }
+                    None => continue,
+                }
+            }
+            partial.extend_from_slice(chunk);
             // Emit complete lines; keep a trailing partial line for later.
             while let Some(i) = partial.iter().position(|&b| b == b'\n') {
                 let line: Vec<u8> = partial.drain(..=i).collect();
@@ -87,6 +110,15 @@ fn follow_file(path: &Path, file: File, tx: &mpsc::SyncSender<Result<String>>) -
                     .send(Ok(String::from_utf8_lossy(&line).into_owned()))
                     .is_err()
                 {
+                    return Ok(());
+                }
+            }
+            if partial.len() > MAX_LINE {
+                partial.truncate(MAX_LINE);
+                let line = String::from_utf8_lossy(&partial).into_owned();
+                partial.clear();
+                discarding = true;
+                if tx.send(Ok(line)).is_err() {
                     return Ok(());
                 }
             }
@@ -101,6 +133,7 @@ fn follow_file(path: &Path, file: File, tx: &mpsc::SyncSender<Result<String>>) -
             reader.seek(SeekFrom::Start(0))?;
             pos = 0;
             partial.clear();
+            discarding = false;
         }
     }
 }

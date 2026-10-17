@@ -2,6 +2,7 @@
 
 use crate::record::{Record, Value};
 use crate::stats::{Summary, TopN};
+use std::borrow::Cow;
 use std::io::{self, Write};
 
 const RESET: &str = "\x1b[0m";
@@ -57,7 +58,7 @@ impl Printer {
                 let line = r
                     .fields
                     .iter()
-                    .map(|(k, v)| format!("{k}={}", logfmt_value(v)))
+                    .map(|(k, v)| format!("{}={}", clean(k), logfmt_value(v)))
                     .collect::<Vec<_>>()
                     .join(" ");
                 writeln!(out, "{line}")
@@ -80,10 +81,10 @@ impl Printer {
         let level = r.get_any(LEVEL_KEYS);
         let msg = r.get_any(MSG_KEYS);
         if let Some((_, t)) = time {
-            parts.push(self.paint(DIM, &t.to_string()));
+            parts.push(self.paint(DIM, &clean(&t.to_string())));
         }
         if let Some((_, l)) = level {
-            let l = l.to_string();
+            let l = clean(&l.to_string()).into_owned();
             let c = level_color(&l);
             parts.push(self.paint(c, &format!("{:<5}", l.to_uppercase())));
         }
@@ -97,7 +98,7 @@ impl Printer {
             parts.push(self.paint(c, &format!("{status}")));
         }
         if let Some((_, m)) = msg {
-            parts.push(self.paint(BOLD, &m.to_string()));
+            parts.push(self.paint(BOLD, &clean(&m.to_string())));
         }
         let skip = [
             time.map(|t| t.0),
@@ -109,7 +110,11 @@ impl Printer {
             if skip.contains(&Some(k.as_str())) {
                 continue;
             }
-            parts.push(format!("{}={}", self.paint(CYAN, k), logfmt_value(v)));
+            parts.push(format!(
+                "{}={}",
+                self.paint(CYAN, &clean(k)),
+                logfmt_value(v)
+            ));
         }
         writeln!(out, "{}", parts.join(" "))
     }
@@ -150,6 +155,7 @@ impl Printer {
             .min(60);
         let max = rows.first().map_or(1, |r| r.1).max(1) as f64;
         for (v, c) in rows {
+            let v = clean(v);
             let pct = c as f64 * 100.0 / total;
             let bar = "█".repeat(((c as f64 / max) * 30.0).round().max(1.0) as usize);
             writeln!(
@@ -198,11 +204,11 @@ impl Printer {
             )
         )?;
         for (group, s) in rows {
-            let g = if group.is_empty() {
+            let g = clean(if group.is_empty() {
                 field
             } else {
                 group.as_str()
-            };
+            });
             writeln!(
                 out,
                 "{g:<gw$}  {:>8}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}  {:>10}",
@@ -241,10 +247,32 @@ fn level_color(level: &str) -> &'static str {
 fn logfmt_value(v: &Value) -> String {
     let s = v.to_string();
     if s.is_empty() || s.contains(|c: char| c.is_whitespace() || c == '"' || c == '=') {
+        // Debug formatting escapes control characters as well as quotes.
         format!("{:?}", s)
     } else {
-        s
+        clean(&s).into_owned()
     }
+}
+
+/// Escape control characters before they reach a terminal.
+///
+/// Log content is attacker-controlled (user agents, request paths, error
+/// messages). Printing raw ESC/OSC sequences would let a crafted line rewrite
+/// the screen, set the window title or, on some terminals, write to the
+/// clipboard. Only our own colour codes may emit escapes.
+pub fn clean(s: &str) -> Cow<'_, str> {
+    if !s.chars().any(char::is_control) {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
 }
 
 #[cfg(test)]
@@ -286,6 +314,27 @@ mod tests {
             fields: None,
         };
         assert!(render(&p, "level=error msg=boom").contains("\x1b[31mERROR"));
+    }
+
+    #[test]
+    fn control_chars_are_escaped() {
+        let p = Printer {
+            mode: OutputMode::Pretty,
+            color: false,
+            fields: None,
+        };
+        let line = "{\"msg\":\"x\\u001b]0;pwned\\u0007y\",\"ua\":\"a\\u001b[2Jb\"}";
+        let mut buf = Vec::new();
+        p.print(
+            &mut buf,
+            &crate::parse::parse_line(line, crate::parse::Format::Json).unwrap(),
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(!out.contains('\x1b'), "raw ESC leaked: {out:?}");
+        assert!(!out.contains('\x07'));
+        assert!(out.contains("\\u{1b}"));
+        assert_eq!(clean("plain"), "plain");
     }
 
     #[test]

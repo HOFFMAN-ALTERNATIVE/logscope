@@ -250,3 +250,17 @@ fn follow_mode_picks_up_appended_lines() {
     let line = got.expect("follow mode should emit the appended error line");
     assert!(line.contains("appended"), "got {line:?}");
 }
+
+#[test]
+fn overlong_line_is_truncated_not_buffered() {
+    // 3 MiB without a newline, then a normal record.
+    let mut input = "x".repeat(3 << 20);
+    input.push('\n');
+    input.push_str("level=error msg=after\n");
+    logscope()
+        .args(["-w", "level == error", "--count"])
+        .write_stdin(input)
+        .assert()
+        .success()
+        .stdout("1\n");
+}

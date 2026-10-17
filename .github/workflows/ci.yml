@@ -48,3 +48,12 @@ jobs:
           for i in $(seq 1 2000); do cat examples/access.log; done > /tmp/big.log
           time ./target/release/logscope /tmp/big.log --top path -n 5 --color never
           time ./target/release/logscope /tmp/big.log --stats request_time --by method --color never
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
